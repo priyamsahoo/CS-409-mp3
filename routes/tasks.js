@@ -16,11 +16,10 @@ module.exports = function (router) {
     }
 
     // helper to add/remove task from user pendingTasks
-    function addTaskToUser(userId, taskId, userName) {
+    // NOTE: do NOT modify the user's name here. Name updates are handled in the users routes.
+    function addTaskToUser(userId, taskId) {
         if (!userId) return Promise.resolve();
-        return User.updateOne({ _id: userId, pendingTasks: { $ne: taskId } }, { $push: { pendingTasks: taskId } }).then(function () {
-            return User.updateOne({ _id: userId }, { $set: { name: userName } }).catch(function () { });
-        });
+        return User.updateOne({ _id: userId, pendingTasks: { $ne: taskId } }, { $push: { pendingTasks: taskId } });
     }
 
     function removeTaskFromUser(userId, taskId) {
@@ -70,19 +69,41 @@ module.exports = function (router) {
             var description = req.body.description || '';
             var completed = (req.body.completed === 'true' || req.body.completed === true);
             var assignedUser = req.body.assignedUser || '';
-            var assignedUserName = req.body.assignedUserName || (assignedUser ? 'unassigned' : 'unassigned');
+            var assignedUserName = req.body.assignedUserName;
 
             if (!name || !deadline) {
                 return res.status(400).json({ message: 'Bad Request: name and deadline are required', data: {} });
             }
 
             var dl = new Date(parseInt(deadline));
+            // If assignedUser provided, validate and resolve assignedUserName from the user document
+            if (assignedUser) {
+                // validate id format
+                if (!mongoose.Types.ObjectId.isValid(assignedUser)) {
+                    return res.status(400).json({ message: 'Bad Request: invalid assignedUser id format', data: {} });
+                }
+                var theUser = await User.findById(assignedUser);
+                if (!theUser) return res.status(404).json({ message: 'Not Found: assigned user does not exist', data: {} });
+
+                if (assignedUserName) {
+                    // If client provided a name, it must match the user's current name
+                    if (assignedUserName !== theUser.name) {
+                        return res.status(400).json({ message: 'Bad Request: assignedUserName does not match user name', data: { provided: assignedUserName, actual: theUser.name } });
+                    }
+                } else {
+                    // default the assignedUserName to the name from user object
+                    assignedUserName = theUser.name;
+                }
+            } else {
+                assignedUserName = assignedUserName || '';
+            }
+
             var t = new Task({ name: name, description: description, deadline: dl, completed: completed, assignedUser: assignedUser, assignedUserName: assignedUserName });
             var saved = await t.save();
 
-            // If assigned and not completed, add to user's pendingTasks
+            // If assigned and not completed, add to user's pendingTasks (do NOT change user's name)
             if (assignedUser && !completed) {
-                await User.updateOne({ _id: assignedUser }, { $addToSet: { pendingTasks: saved._id.toString() }, $set: { name: assignedUserName } }).catch(function () { });
+                await addTaskToUser(assignedUser, saved._id.toString()).catch(function () { });
             }
 
             return res.status(201).json({ message: 'Task created', data: saved });
@@ -134,13 +155,32 @@ module.exports = function (router) {
             var oldAssigned = task.assignedUser;
             var oldCompleted = task.completed;
 
+            // If assignedUser is provided in the update, resolve and validate assignedUserName against the user
+            var resolvedAssignedUserName;
+            if (body.assignedUser) {
+                if (!mongoose.Types.ObjectId.isValid(body.assignedUser)) {
+                    return res.status(400).json({ message: 'Bad Request: invalid assignedUser id format', data: {} });
+                }
+                var theUser = await User.findById(body.assignedUser);
+                if (!theUser) return res.status(404).json({ message: 'Not Found: assigned user does not exist', data: {} });
+
+                if (body.assignedUserName) {
+                    if (body.assignedUserName !== theUser.name) {
+                        return res.status(400).json({ message: 'Bad Request: assignedUserName does not match user name', data: { provided: body.assignedUserName, actual: theUser.name } });
+                    }
+                    resolvedAssignedUserName = body.assignedUserName;
+                } else {
+                    resolvedAssignedUserName = theUser.name;
+                }
+            }
+
             // update fields
             task.name = body.name;
             task.description = body.description || '';
             task.deadline = new Date(parseInt(body.deadline));
             task.completed = (body.completed === 'true' || body.completed === true);
             task.assignedUser = body.assignedUser || '';
-            task.assignedUserName = body.assignedUserName || (task.assignedUser ? task.assignedUserName : 'unassigned');
+            task.assignedUserName = (typeof resolvedAssignedUserName !== 'undefined') ? resolvedAssignedUserName : (body.assignedUserName || (task.assignedUser ? task.assignedUserName : 'unassigned'));
 
             var saved = await task.save();
 
@@ -151,7 +191,7 @@ module.exports = function (router) {
 
             // If now assigned and not completed, add to user's pendingTasks
             if (task.assignedUser && !task.completed) {
-                await addTaskToUser(task.assignedUser, task._id.toString(), task.assignedUserName);
+                await addTaskToUser(task.assignedUser, task._id.toString());
             }
 
             // If marked completed, ensure it's removed from user's pendingTasks
