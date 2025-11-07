@@ -178,12 +178,21 @@ module.exports = function (router) {
             }
 
             // Replace fields
+            var oldName = user.name;
             user.name = body.name;
             user.email = body.email;
             user.pendingTasks = newPending;
             // ignore any dateCreated provided by client to preserve server-side creation date
 
             var saved = await user.save();
+
+            // If name changed, update assignedUserName on all tasks assigned to this user
+            if (oldName !== body.name) {
+                await Task.updateMany(
+                    { assignedUser: req.params.id },
+                    { assignedUserName: body.name }
+                );
+            }
             return res.status(200).json({ message: 'User updated', data: saved });
         } catch (err) {
             return res.status(500).json({ message: 'Server error', data: err });
