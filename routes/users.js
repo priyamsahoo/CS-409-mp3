@@ -1,4 +1,5 @@
 var express = require('express');
+var mongoose = require('mongoose');
 var User = require('../models/user');
 var Task = require('../models/task');
 
@@ -117,6 +118,11 @@ module.exports = function (router) {
                 return res.status(400).json({ message: 'Bad Request: name and email are required', data: {} });
             }
 
+            // validate user id format
+            if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+                return res.status(400).json({ message: 'Bad Request: invalid user id format', data: {} });
+            }
+
             // ensure email uniqueness (exclude this user)
             var other = await User.findOne({ email: body.email, _id: { $ne: req.params.id } });
             if (other) return res.status(400).json({ message: 'Bad Request: email already exists', data: {} });
@@ -136,17 +142,36 @@ module.exports = function (router) {
             // Then, set assignedUser for newly added tasks
             var toAdd = newPending.filter(function (t) { return user.pendingTasks.indexOf(t) === -1; });
             if (toAdd.length > 0) {
-                // ensure none of the tasks being added are already completed
+                // validate each id format first
+                for (var i = 0; i < toAdd.length; i++) {
+                    if (!mongoose.Types.ObjectId.isValid(toAdd[i])) {
+                        return res.status(400).json({ message: 'Bad Request: invalid task id format in pendingTasks', data: toAdd[i] });
+                    }
+                }
+
+                // ensure all tasks exist
                 try {
                     var tasksFound = await Task.find({ _id: { $in: toAdd } }).select('_id completed');
                 } catch (e) {
                     return res.status(400).json({ message: 'Bad Request: invalid task id in pendingTasks', data: e });
                 }
+                if (tasksFound.length !== toAdd.length) {
+                    // compute missing ids
+                    var foundIds = tasksFound.map(function (t) { return t._id.toString(); });
+                    var missing = toAdd.filter(function (x) { return foundIds.indexOf(x.toString()) === -1; });
+                    return res.status(404).json({ message: 'Not Found: some task ids do not exist', data: missing });
+                }
+
+                // ensure none of the tasks being added are already completed
                 var completedIds = tasksFound.filter(function (t) { return t.completed === true; }).map(function (t) { return t._id; });
                 if (completedIds.length > 0) {
                     return res.status(400).json({ message: 'Bad Request: cannot add completed tasks to pendingTasks', data: completedIds });
                 }
 
+                // Remove these task ids from any other user's pendingTasks to avoid stale references
+                await User.updateMany({ _id: { $ne: req.params.id }, pendingTasks: { $in: toAdd } }, { $pull: { pendingTasks: { $in: toAdd } } });
+
+                // assign tasks to this user
                 if (toAdd.length > 0) {
                     await Task.updateMany({ _id: { $in: toAdd } }, { assignedUser: req.params.id, assignedUserName: body.name });
                 }
@@ -156,7 +181,7 @@ module.exports = function (router) {
             user.name = body.name;
             user.email = body.email;
             user.pendingTasks = newPending;
-            if (body.dateCreated) user.dateCreated = body.dateCreated;
+            // ignore any dateCreated provided by client to preserve server-side creation date
 
             var saved = await user.save();
             return res.status(200).json({ message: 'User updated', data: saved });
