@@ -116,6 +116,11 @@ module.exports = function (router) {
             var task = await Task.findById(req.params.id);
             if (!task) return res.status(404).json({ message: 'Not Found', data: {} });
 
+            // Disallow modifying an already completed task
+            if (task.completed === true) {
+                return res.status(400).json({ message: 'Bad Request: cannot modify a completed task', data: {} });
+            }
+
             var oldAssigned = task.assignedUser;
             var oldCompleted = task.completed;
 
