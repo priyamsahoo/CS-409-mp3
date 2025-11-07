@@ -99,6 +99,10 @@ module.exports = function (router) {
     users.get('/:id', function (req, res) {
         var select = parseJSONParam(req.query.select) || parseJSONParam(req.query.filter);
         if (select === null) return res.status(400).json({ message: 'Bad Request: malformed JSON in select', data: {} });
+        // validate id format and return 400 for malformed ids
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({ message: 'Bad Request: invalid id format', data: {} });
+        }
 
         var q = User.findById(req.params.id);
         if (select) q = q.select(select);
@@ -202,6 +206,10 @@ module.exports = function (router) {
     // DELETE /api/users/:id
     users.delete('/:id', async function (req, res) {
         try {
+            // validate id format
+            if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+                return res.status(400).json({ message: 'Bad Request: invalid user id format', data: {} });
+            }
             var user = await User.findById(req.params.id);
             if (!user) return res.status(404).json({ message: 'Not Found', data: {} });
 

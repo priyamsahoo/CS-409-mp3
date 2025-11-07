@@ -1,4 +1,5 @@
 var express = require('express');
+var mongoose = require('mongoose');
 var Task = require('../models/task');
 var User = require('../models/user');
 
@@ -95,6 +96,11 @@ module.exports = function (router) {
         var select = parseJSONParam(req.query.select);
         if (select === null) return res.status(400).json({ message: 'Bad Request: malformed JSON in select', data: {} });
 
+        // validate id format and return 400 for malformed ids
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({ message: 'Bad Request: invalid id format', data: {} });
+        }
+
         var q = Task.findById(req.params.id);
         if (select) q = q.select(select);
         q.exec().then(function (task) {
@@ -108,6 +114,10 @@ module.exports = function (router) {
     // PUT /api/tasks/:id
     tasks.put('/:id', async function (req, res) {
         try {
+            // validate id format
+            if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+                return res.status(400).json({ message: 'Bad Request: invalid task id format', data: {} });
+            }
             var body = req.body;
             if (!body.name || !body.deadline) {
                 return res.status(400).json({ message: 'Bad Request: name and deadline are required', data: {} });
@@ -158,6 +168,10 @@ module.exports = function (router) {
     // DELETE /api/tasks/:id
     tasks.delete('/:id', async function (req, res) {
         try {
+            // validate id format
+            if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+                return res.status(400).json({ message: 'Bad Request: invalid task id format', data: {} });
+            }
             var task = await Task.findById(req.params.id);
             if (!task) return res.status(404).json({ message: 'Not Found', data: {} });
 
