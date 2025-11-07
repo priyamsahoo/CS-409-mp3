@@ -16,7 +16,6 @@ module.exports = function (router) {
     }
 
     // helper to add/remove task from user pendingTasks
-    // NOTE: do NOT modify the user's name here. Name updates are handled in the users routes.
     function addTaskToUser(userId, taskId) {
         if (!userId) return Promise.resolve();
         return User.updateOne({ _id: userId, pendingTasks: { $ne: taskId } }, { $push: { pendingTasks: taskId } });
