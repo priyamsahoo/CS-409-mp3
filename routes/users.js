@@ -68,13 +68,28 @@ module.exports = function (router) {
                 return res.status(400).json({ message: 'Bad Request: email already exists', data: {} });
             }
 
-            // If pendingTasks provided, ensure none of the tasks are already completed
+            // If pendingTasks provided, validate ids, ensure tasks exist and none are completed
             if (Array.isArray(pendingTasks) && pendingTasks.length > 0) {
+                // validate id format first
+                for (var i = 0; i < pendingTasks.length; i++) {
+                    if (!mongoose.Types.ObjectId.isValid(pendingTasks[i])) {
+                        return res.status(400).json({ message: 'Bad Request: invalid task id format in pendingTasks', data: pendingTasks[i] });
+                    }
+                }
+
                 try {
                     var tasksFound = await Task.find({ _id: { $in: pendingTasks } }).select('_id completed');
                 } catch (e) {
                     return res.status(400).json({ message: 'Bad Request: invalid task id in pendingTasks', data: e });
                 }
+
+                // ensure all referenced tasks actually exist
+                if (tasksFound.length !== pendingTasks.length) {
+                    var foundIds = tasksFound.map(function (t) { return t._id.toString(); });
+                    var missing = pendingTasks.filter(function (x) { return foundIds.indexOf(x.toString()) === -1; });
+                    return res.status(404).json({ message: 'Not Found: some task ids do not exist', data: missing });
+                }
+
                 var completedIds = tasksFound.filter(function (t) { return t.completed === true; }).map(function (t) { return t._id; });
                 if (completedIds.length > 0) {
                     return res.status(400).json({ message: 'Bad Request: cannot add completed tasks to pendingTasks', data: completedIds });
@@ -84,9 +99,12 @@ module.exports = function (router) {
             var u = new User({ name: name, email: email, pendingTasks: pendingTasks });
             var saved = await u.save();
 
-            // if pendingTasks provided, ensure tasks reference this user
+            // If pendingTasks provided, remove these task ids from any other user's pendingTasks to avoid stale references
             if (Array.isArray(pendingTasks) && pendingTasks.length > 0) {
-                Task.updateMany({ _id: { $in: pendingTasks } }, { assignedUser: saved._id.toString(), assignedUserName: saved.name }).catch(function () { });
+                await User.updateMany({ _id: { $ne: saved._id }, pendingTasks: { $in: pendingTasks } }, { $pull: { pendingTasks: { $in: pendingTasks } } });
+
+                // assign tasks to this new user
+                await Task.updateMany({ _id: { $in: pendingTasks } }, { assignedUser: saved._id.toString(), assignedUserName: saved.name });
             }
 
             return res.status(201).json({ message: 'User created', data: saved });
